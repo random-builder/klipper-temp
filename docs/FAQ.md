@@ -2,7 +2,7 @@ Frequently asked questions
 ==========================
 
 1. [How can I donate to the project?](#how-can-i-donate-to-the-project)
-2. [How do I calculate the step_distance parameter in the printer config file?](#how-do-i-calculate-the-step_distance-parameter-in-the-printer-config-file)
+2. [How do I calculate the rotation_distance config parameter?](#how-do-i-calculate-the-rotation_distance-config-parameter)
 3. [Where's my serial port?](#wheres-my-serial-port)
 4. [When the micro-controller restarts the device changes to /dev/ttyUSB1](#when-the-micro-controller-restarts-the-device-changes-to-devttyusb1)
 5. [The "make flash" command doesn't work](#the-make-flash-command-doesnt-work)
@@ -31,25 +31,9 @@ Frequently asked questions
 Thanks. Kevin has a Patreon page at:
 [https://www.patreon.com/koconnor](https://www.patreon.com/koconnor)
 
-### How do I calculate the step_distance parameter in the printer config file?
+### How do I calculate the rotation_distance config parameter?
 
-If you know the steps per millimeter for the axis then use a
-calculator to divide 1.0 by steps_per_mm. Then round this number to
-six decimal places and place it in the config (six decimal places is
-nano-meter precision).
-
-The step_distance defines the distance that the axis will travel on
-each motor driver pulse. It can also be calculated from the axis
-pitch, motor step angle, and driver microstepping. If unsure, do a web
-search for "calculate steps per mm" to find an online calculator.
-
-Klipper uses step_distance instead of steps_per_mm in order to use
-consistent units of measurement in the config file. (The config uses
-millimeters for all distance measurements.) It is believed that
-steps_per_mm originated as an optimization on old 8-bit
-micro-controllers (the desire to use a multiply instead of a divide in
-some low-level code). Continuing to configure this one distance in
-units of "inverse millimeters" is felt to be quirky and unnecessary.
+See the [rotation distance document](Rotation_Distance.md).
 
 ### Where's my serial port?
 
@@ -262,9 +246,9 @@ around 10000 steps per second. If it is requested to move at a speed
 that would require a higher step rate then Marlin will generally just
 step as fast as it can. Klipper is able to achieve much higher step
 rates, but the stepper motor may not have sufficient torque to move at
-a higher speed. So, for a Z axis with a very precise step_distance the
-actual obtainable max_z_velocity may be smaller than what is
-configured in Marlin.
+a higher speed. So, for a Z axis with a high gearing ratio or high
+microsteps setting the actual obtainable max_z_velocity may be smaller
+than what is configured in Marlin.
 
 ### My TMC motor driver turns off in the middle of a print
 
@@ -349,22 +333,17 @@ details.
 
 ### How do I convert a Marlin pin number to a Klipper pin name?
 
-Short answer: In some cases one can use Klipper's `pin_map: arduino`
-feature. Otherwise, for "digital" pins, one method is to search for
-the requested pin in Marlin's fastio header files. The Atmega2560 and
-Atmega1280 chips use
-[fastio_1280.h](https://github.com/MarlinFirmware/Marlin/blob/1.1.9/Marlin/fastio_1280.h),
-while the Atmega644p and Atmega1284p chips use
-[fastio_644.h](https://github.com/MarlinFirmware/Marlin/blob/1.1.9/Marlin/fastio_644.h).
-For example, if you are looking to translate Marlin's digital pin
-number 23 on an atmega2560 then one could find the following line in
-Marlin's fastio_1280.h file:
-```
-#define DIO23_PIN PINA1
-```
-The `DIO23` indicates the line is for Marlin's pin 23 and the `PINA1`
-indicates the pin uses the hardware name of `PA1`. Klipper uses the
-hardware names (eg, `PA1`).
+Short answer: A mapping is available in the
+[sample-aliases.cfg](../config/sample-aliases.cfg) file. Use that file
+as a guide to finding the actual micro-controller pin names. (It is
+also possible to copy the relevant
+[board_pins](Config_Reference.md#board_pins) config section into your
+config file and use the aliases in your config, but it is preferable
+to translate and use the actual micro-controller pin names.) Note that
+the sample-aliases.cfg file uses pin names that start with the prefix
+"ar" instead of "D" (eg, Arduino pin `D23` is Klipper alias `ar23`)
+and the prefix "analog" instead of "A" (eg, Arduino pin `A14` is
+Klipper alias `analog14`).
 
 Long answer: Klipper uses the standard pin names defined by the
 micro-controller. On the Atmega chips these hardware pins have names
@@ -378,22 +357,8 @@ In particular the Arduino pin numbers frequently don't translate to
 the same hardware names. For example, `D21` is `PD0` on one common
 Arduino board, but is `PC7` on another common Arduino board.
 
-In order to support 3d printers based on real Arduino boards, Klipper
-supports the Arduino pin aliases. This feature is enabled by adding
-`pin_map: arduino` to the [mcu] section of the config file. When these
-aliases are enabled, Klipper understands pin names that start with the
-prefix "ar" (eg, Arduino pin `D23` is Klipper alias `ar23`) and the
-prefix "analog" (eg, Arduino pin `A14` is Klipper alias `analog14`).
-Klipper does not use the Arduino names directly because we feel a name
-like D7 is too easily confused with the hardware name PD7.
-
-Marlin primarily follows the Arduino pin numbering scheme.  However,
-Marlin supports a few chips that Arduino does not support and in some
-cases it supports pins that Arduino boards do not expose. In these
-cases, Marlin chose their own pin numbering scheme. Klipper does not
-support these custom pin numbers - check Marlin's fastio headers (see
-above) to translate these pin numbers to their standard hardware
-names.
+To avoid this confusion, the core Klipper code uses the standard pin
+names defined by the micro-controller.
 
 ### Do I have to wire my device to a specific type of micro-controller pin?
 
@@ -410,8 +375,7 @@ similar devices to any general purpose IO pin. However, fans and
 output_pin devices may be optionally configured to use `hardware_pwm:
 True`, in which case the micro-controller must support hardware PWM on
 the pin (otherwise, Klipper will report a "Not a valid PWM pin"
-error). Note that hardware PWM is currently only supported on the avr,
-atsam, samd21, and linux micro-controllers.
+error).
 
 IRQ pins (or Interrupt pins): Klipper does not use hardware interrupts
 on IO pins, so it is never necessary to wire a device to one of these

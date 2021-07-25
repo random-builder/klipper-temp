@@ -1,6 +1,6 @@
 # Wrapper around C helper code
 #
-# Copyright (C) 2016-2020  Kevin O'Connor <kevin@koconnor.net>
+# Copyright (C) 2016-2021  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import os, logging
@@ -18,6 +18,7 @@ COMPILE_ARGS = ("-Wall -g -O2 -shared -fPIC"
 SSE_FLAGS = "-mfpmath=sse -msse2"
 SOURCE_FILES = [
     'pyhelper.c', 'serialqueue.c', 'stepcompress.c', 'itersolve.c', 'trapq.c',
+    'pollreactor.c', 'msgblock.c', 'trdispatch.c',
     'kin_cartesian.c', 'kin_corexy.c', 'kin_corexz.c', 'kin_delta.c',
     'kin_polar.c', 'kin_rotary_delta.c', 'kin_winch.c', 'kin_extruder.c',
     'kin_shaper.c',
@@ -25,16 +26,20 @@ SOURCE_FILES = [
 DEST_LIB = "c_helper.so"
 OTHER_FILES = [
     'list.h', 'serialqueue.h', 'stepcompress.h', 'itersolve.h', 'pyhelper.h',
-    'trapq.h',
+    'trapq.h', 'pollreactor.h', 'msgblock.h'
 ]
 
 defs_stepcompress = """
     struct stepcompress *stepcompress_alloc(uint32_t oid);
     void stepcompress_fill(struct stepcompress *sc, uint32_t max_error
-        , uint32_t invert_sdir, uint32_t queue_step_msgid
-        , uint32_t set_next_step_dir_msgid);
+        , uint32_t invert_sdir, int32_t queue_step_msgtag
+        , int32_t set_next_step_dir_msgtag);
     void stepcompress_free(struct stepcompress *sc);
     int stepcompress_reset(struct stepcompress *sc, uint64_t last_step_clock);
+    int stepcompress_set_last_position(struct stepcompress *sc
+        , int64_t last_position);
+    int64_t stepcompress_find_past_position(struct stepcompress *sc
+        , uint64_t clock);
     int stepcompress_queue_msg(struct stepcompress *sc
         , uint32_t *data, int len);
 
@@ -75,6 +80,7 @@ defs_trapq = """
 
 defs_kin_cartesian = """
     struct stepper_kinematics *cartesian_stepper_alloc(char axis);
+    struct stepper_kinematics *cartesian_reverse_stepper_alloc(char axis);
 """
 
 defs_kin_corexy = """
@@ -141,7 +147,8 @@ defs_serialqueue = """
         uint64_t notify_id;
     };
 
-    struct serialqueue *serialqueue_alloc(int serial_fd, int write_only);
+    struct serialqueue *serialqueue_alloc(int serial_fd, char serial_fd_type
+        , int client_id);
     void serialqueue_exit(struct serialqueue *sq);
     void serialqueue_free(struct serialqueue *sq);
     struct command_queue *serialqueue_alloc_commandqueue(void);
@@ -156,10 +163,23 @@ defs_serialqueue = """
     void serialqueue_set_receive_window(struct serialqueue *sq
         , int receive_window);
     void serialqueue_set_clock_est(struct serialqueue *sq, double est_freq
-        , double last_clock_time, uint64_t last_clock);
+        , double conv_time, uint64_t conv_clock, uint64_t last_clock);
     void serialqueue_get_stats(struct serialqueue *sq, char *buf, int len);
     int serialqueue_extract_old(struct serialqueue *sq, int sentq
         , struct pull_queue_message *q, int max);
+"""
+
+defs_trdispatch = """
+    void trdispatch_start(struct trdispatch *td, uint32_t dispatch_reason);
+    void trdispatch_stop(struct trdispatch *td);
+    struct trdispatch *trdispatch_alloc(void);
+    struct trdispatch_mcu *trdispatch_mcu_alloc(struct trdispatch *td
+        , struct serialqueue *sq, struct command_queue *cq, uint32_t trsync_oid
+        , uint32_t set_timeout_msgtag, uint32_t trigger_msgtag
+        , uint32_t state_msgtag);
+    void trdispatch_mcu_setup(struct trdispatch_mcu *tdm
+        , uint64_t last_status_clock, uint64_t expire_clock
+        , uint64_t expire_ticks, uint64_t min_extend_ticks);
 """
 
 defs_pyhelper = """
@@ -173,9 +193,10 @@ defs_std = """
 
 defs_all = [
     defs_pyhelper, defs_serialqueue, defs_std, defs_stepcompress,
-    defs_itersolve, defs_trapq, defs_kin_cartesian, defs_kin_corexy,
-    defs_kin_corexz, defs_kin_delta, defs_kin_polar, defs_kin_rotary_delta,
-    defs_kin_winch, defs_kin_extruder, defs_kin_shaper,
+    defs_itersolve, defs_trapq, defs_trdispatch,
+    defs_kin_cartesian, defs_kin_corexy, defs_kin_corexz, defs_kin_delta,
+    defs_kin_polar, defs_kin_rotary_delta, defs_kin_winch, defs_kin_extruder,
+    defs_kin_shaper,
 ]
 
 # Update filenames to an absolute path
@@ -199,15 +220,28 @@ def check_build_code(sources, target):
     obj_times = get_mtimes([target])
     return not obj_times or max(src_times) > min(obj_times)
 
+# Check if the current gcc version supports a particular command-line option
 def check_gcc_option(option):
     cmd = "%s %s -S -o /dev/null -xc /dev/null > /dev/null 2>&1" % (
         GCC_CMD, option)
     res = os.system(cmd)
     return res == 0
 
+# Check if the current gcc version supports a particular command-line option
+def do_build_code(cmd):
+    res = os.system(cmd)
+    if res:
+        msg = "Unable to build C code module (error=%s)" % (res,)
+        logging.error(msg)
+        raise Exception(msg)
+
 FFI_main = None
 FFI_lib = None
 pyhelper_logging_callback = None
+
+# Hepler invoked from C errorf() code to log errors
+def logging_callback(msg):
+    logging.error(FFI_main.string(msg))
 
 # Return the Foreign Function Interface api to the caller
 def get_ffi():
@@ -223,16 +257,14 @@ def get_ffi():
             else:
                 cmd = "%s %s" % (GCC_CMD, COMPILE_ARGS)
             logging.info("Building C code module %s", DEST_LIB)
-            os.system(cmd % (destlib, ' '.join(srcfiles)))
+            do_build_code(cmd % (destlib, ' '.join(srcfiles)))
         FFI_main = cffi.FFI()
         for d in defs_all:
             FFI_main.cdef(d)
         FFI_lib = FFI_main.dlopen(destlib)
         # Setup error logging
-        def logging_callback(msg):
-            logging.error(FFI_main.string(msg))
-        pyhelper_logging_callback = FFI_main.callback(
-            "void func(const char *)", logging_callback)
+        pyhelper_logging_callback = FFI_main.callback("void func(const char *)",
+                                                      logging_callback)
         FFI_lib.set_python_logging_callback(pyhelper_logging_callback)
     return FFI_main, FFI_lib
 
@@ -254,7 +286,7 @@ def run_hub_ctrl(enable_power):
     destlib = get_abs_files(hubdir, [HC_TARGET])[0]
     if check_build_code(srcfiles, destlib):
         logging.info("Building C code module %s", HC_TARGET)
-        os.system(HC_COMPILE_CMD % (destlib, ' '.join(srcfiles)))
+        do_build_code(HC_COMPILE_CMD % (destlib, ' '.join(srcfiles)))
     os.system(HC_CMD % (hubdir, enable_power))
 
 

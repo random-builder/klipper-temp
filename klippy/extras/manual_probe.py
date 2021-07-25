@@ -12,14 +12,13 @@ class ManualProbe:
         self.gcode = self.printer.lookup_object('gcode')
         self.gcode.register_command('MANUAL_PROBE', self.cmd_MANUAL_PROBE,
                                     desc=self.cmd_MANUAL_PROBE_help)
-        self.z_position_endstop = None
-        if config.has_section('stepper_z'):
-            zconfig = config.getsection('stepper_z')
-            if zconfig.get_prefix_options('position_endstop'):
-                self.z_position_endstop = zconfig.getfloat('position_endstop')
-                self.gcode.register_command(
-                    'Z_ENDSTOP_CALIBRATE', self.cmd_Z_ENDSTOP_CALIBRATE,
-                    desc=self.cmd_Z_ENDSTOP_CALIBRATE_help)
+        zconfig = config.getsection('stepper_z')
+        self.z_position_endstop = zconfig.getfloat('position_endstop', None,
+                                                   note_valid=False)
+        if self.z_position_endstop is not None:
+            self.gcode.register_command(
+                'Z_ENDSTOP_CALIBRATE', self.cmd_Z_ENDSTOP_CALIBRATE,
+                desc=self.cmd_Z_ENDSTOP_CALIBRATE_help)
     def manual_probe_finalize(self, kin_pos):
         if kin_pos is not None:
             self.gcode.respond_info("Z position is %.3f" % (kin_pos[2],))
@@ -83,9 +82,9 @@ class ManualProbeHelper:
             return self.last_kinematics_pos
         self.toolhead.flush_step_generation()
         kin = self.toolhead.get_kinematics()
-        for s in kin.get_steppers():
-            s.set_tag_position(s.get_commanded_position())
-        kin_pos = kin.calc_tag_position()
+        kin_spos = {s.get_name(): s.get_commanded_position()
+                    for s in kin.get_steppers()}
+        kin_pos = kin.calc_position(kin_spos)
         self.last_toolhead_pos = toolhead_pos
         self.last_kinematics_pos = kin_pos
         return kin_pos
