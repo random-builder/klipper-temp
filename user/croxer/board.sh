@@ -26,10 +26,10 @@ function install_firmware() {
     local output="${base_dir}/out-${name}/"    
 
     echo "### build firmware"
-    make KCONFIG_CONFIG=${config} OUT=${output} menuconfig all
+    make PYTHON=python3 KCONFIG_CONFIG=${config} OUT=${output} menuconfig all
 
     echo "### flash firmware"
-    make KCONFIG_CONFIG=${config} OUT=${output} flash FLASH_DEVICE=${path}
+    make PYTHON=python3 KCONFIG_CONFIG=${config} OUT=${output} flash FLASH_DEVICE=${path}
 
 }
 
