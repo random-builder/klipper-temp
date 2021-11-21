@@ -47,18 +47,18 @@ cd "$base_dir"
 #
 # original ID: 0483:5740 STMicroelectronics Virtual COM Port
 # user set ID: 0483:5741 STMicroelectronics stm32f446xx
-# https://github.com/bigtreetech/BIGTREETECH-OCTOPUS-V1.0/blob/master/Hardware/BIGTREETECH%20Octopus.pdf
+# https://github.com/FYSETC/FYSETC-SPIDER/blob/main/hardware/Spider%20V1.0C%20SCH.pdf
 #
-readonly MCU_1="octopus-v-1.1"
-readonly DEV_1="/dev/serial/by-id/usb-Klipper_stm32f446xx_12002E000F5053424E363620-if00"
+readonly MCU_1="spider-v-2.2"
+readonly DEV_1="/dev/serial/by-id/usb-Klipper_stm32f446xx_180023000A50563046363120-if00"
 
 #
 # original ID: 0483:5740 STMicroelectronics Virtual COM Port
 # user set ID: 0483:5742 STMicroelectronics stm32f446xx
-# https://github.com/FYSETC/FYSETC-SPIDER/blob/main/hardware/Spider%20V1.0C%20SCH.pdf
+# https://github.com/bigtreetech/BIGTREETECH-OCTOPUS-V1.0/blob/master/Hardware/BIGTREETECH%20Octopus.pdf
 #
-readonly MCU_2="spider-v-2.2"
-readonly DEV_2="/dev/serial/by-id/usb-Klipper_stm32f446xx_180023000A50563046363120-if00"
+readonly MCU_2="octopus-v-1.1"
+readonly DEV_2="/dev/serial/by-id/usb-Klipper_stm32f446xx_12002E000F5053424E363620-if00"
 
 #
 # original ID: 1d50:6015 OpenMoko, Inc. Smoothieboard
