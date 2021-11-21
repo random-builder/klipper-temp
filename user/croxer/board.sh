@@ -79,4 +79,4 @@ readonly DEV_4="/dev/serial/by-id/usb-Arduino__www.arduino.cc__Arduino_Mega_2560
 install_firmware ${MCU_1} ${DEV_1}
 install_firmware ${MCU_2} ${DEV_2}
 install_firmware ${MCU_3} ${DEV_3}
-install_firmware ${MCU_4} ${DEV_4}
+#install_firmware ${MCU_4} ${DEV_4}
