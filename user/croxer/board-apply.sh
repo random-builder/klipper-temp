@@ -43,8 +43,7 @@ octoprint_connection() {
 
 echo "### that_repo=$print3d_repo_dir"
 
-echo "### service init"
-ssh $ssh_root_url "systemctl enable $print3d_service"
+klipper_service enable
 
 echo "### board copy"
 scp $this_dir/board*.*  $ssh_user_url:$print3d_this_dir
