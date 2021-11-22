@@ -43,6 +43,13 @@ octoprint_connection() {
 
 echo "### that_repo=$print3d_repo_dir"
 
+
+echo "### repo reset"
+ssh $ssh_user_url "cd $print3d_repo_dir; git reset --hard"
+
+echo "### repo update"
+ssh $ssh_user_url "cd $print3d_repo_dir; git pull"
+
 klipper_service enable
 
 echo "### board copy"
@@ -52,11 +59,11 @@ octoprint_connection disconnect
 klipper_service stop
 ssh $ssh_user_url "rm -f $print3d_logs_file"
 
-echo "### board build"
+echo "### board setup"
 ssh $ssh_user_url "cd $print3d_this_dir; MENU_WORD='' ./board.sh"
 
 klipper_service start
-sleep 2
+sleep 3
 octoprint_connection connect
 
 echo "### operation complete"
