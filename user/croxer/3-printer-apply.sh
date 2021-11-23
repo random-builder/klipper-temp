@@ -19,10 +19,12 @@ sleep 1
 ssh $ssh_user_url "rm -f $print3d_logs_file"
 
 klipper_service start
-sleep 3
 
+#while true ; do
+sleep 3
 echo "### device init"
 ssh $ssh_user_url "echo FIRMWARE_RESTART > $print3d_device_tty"
+#done
 
 octoprint_connection connect
 
