@@ -1,4 +1,13 @@
 
+### profile: custom1
+
+* update to latest klipper repo @ 2023-10-01
+* continue to use octopi
+* verify works OK
+
+
+--- original profile ---
+
 ### custom printer
 
 repo
