@@ -6,17 +6,21 @@
 
 set -e
 
+this_dir=$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )
+
 make_host="make_print@make1"
 klipper_unit="make_klipper-wanhao_d6.service"
 klipper_data="/home/make_print/wanhao_d6/klip/data"
 klipper_repo="/home/make_print/wanhao_d6/klip/repo"
 
-this_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 #echo "### this_dir=$this_dir"
 
 echo "### service stop"
 ssh $make_host "sudo systemctl stop $klipper_unit"
+
+echo "### repo update"
+ssh $make_host "cd $klipper_repo; git pull"
 
 echo "### build clean"
 ssh $make_host "cd $klipper_repo; make distclean"
