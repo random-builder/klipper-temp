@@ -26,6 +26,21 @@ class GCodeCommand:
         return self._commandline
     def get_command_parameters(self):
         return self._params
+    def get_raw_command_parameters(self):
+        command = self._command
+        if command.startswith("M117 ") or command.startswith("M118 "):
+            command = command[:4]
+        rawparams = self._commandline
+        urawparams = rawparams.upper()
+        if not urawparams.startswith(command):
+            rawparams = rawparams[urawparams.find(command):]
+            end = rawparams.rfind('*')
+            if end >= 0:
+                rawparams = rawparams[:end]
+        rawparams = rawparams[len(command):]
+        if rawparams.startswith(' '):
+            rawparams = rawparams[1:]
+        return rawparams
     def ack(self, msg=None):
         if not self._need_ack:
             return False
@@ -89,6 +104,7 @@ class GCodeDispatch:
         self.ready_gcode_handlers = {}
         self.mux_commands = {}
         self.gcode_help = {}
+        self.status_commands = {}
         # Register commands needed before config file is loaded
         handlers = ['M110', 'M112', 'M115',
                     'RESTART', 'FIRMWARE_RESTART', 'ECHO', 'STATUS', 'HELP']
@@ -111,6 +127,7 @@ class GCodeDispatch:
                 del self.ready_gcode_handlers[cmd]
             if cmd in self.base_gcode_handlers:
                 del self.base_gcode_handlers[cmd]
+            self._build_status_commands()
             return old_cmd
         if cmd in self.ready_gcode_handlers:
             raise self.printer.config_error(
@@ -123,10 +140,12 @@ class GCodeDispatch:
             self.base_gcode_handlers[cmd] = func
         if desc is not None:
             self.gcode_help[cmd] = desc
+        self._build_status_commands()
     def register_mux_command(self, cmd, key, value, func, desc=None):
         prev = self.mux_commands.get(cmd)
         if prev is None:
-            self.register_command(cmd, self._cmd_mux, desc=desc)
+            handler = lambda gcmd: self._cmd_mux(cmd, gcmd)
+            self.register_command(cmd, handler, desc=desc)
             self.mux_commands[cmd] = prev = (key, {})
         prev_key, prev_values = prev
         if prev_key != key:
@@ -140,6 +159,14 @@ class GCodeDispatch:
         prev_values[value] = func
     def get_command_help(self):
         return dict(self.gcode_help)
+    def get_status(self, eventtime):
+        return {'commands': self.status_commands}
+    def _build_status_commands(self):
+        commands = {cmd: {} for cmd in self.gcode_handlers}
+        for cmd in self.gcode_help:
+            if cmd in commands:
+                commands[cmd]['help'] = self.gcode_help[cmd]
+        self.status_commands = commands
     def register_output_handler(self, cb):
         self.output_callbacks.append(cb)
     def _handle_shutdown(self):
@@ -147,12 +174,14 @@ class GCodeDispatch:
             return
         self.is_printer_ready = False
         self.gcode_handlers = self.base_gcode_handlers
+        self._build_status_commands()
         self._respond_state("Shutdown")
     def _handle_disconnect(self):
         self._respond_state("Disconnect")
     def _handle_ready(self):
         self.is_printer_ready = True
         self.gcode_handlers = self.ready_gcode_handlers
+        self._build_status_commands()
         self._respond_state("Ready")
     # Parse input into commands
     args_r = re.compile('([A-Z_]+|[A-Z*/])')
@@ -260,9 +289,9 @@ class GCodeDispatch:
             if cmdline:
                 logging.debug(cmdline)
             return
-        if cmd.startswith("M117 "):
-            # Handle M117 gcode with numeric and special characters
-            handler = self.gcode_handlers.get("M117", None)
+        if cmd.startswith("M117 ") or cmd.startswith("M118 "):
+            # Handle M117/M118 gcode with numeric and special characters
+            handler = self.gcode_handlers.get(cmd[:4], None)
             if handler is not None:
                 handler(gcmd)
                 return
@@ -274,8 +303,8 @@ class GCodeDispatch:
             # Don't warn about requests to turn off fan when fan not present
             return
         gcmd.respond_info('Unknown command:"%s"' % (cmd,))
-    def _cmd_mux(self, gcmd):
-        key, values = self.mux_commands[gcmd.get_command()]
+    def _cmd_mux(self, command, gcmd):
+        key, values = self.mux_commands[command]
         if None in values:
             key_param = gcmd.get(key, None)
         else:

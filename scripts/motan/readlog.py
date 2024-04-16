@@ -16,7 +16,7 @@ class error(Exception):
 # Log data handlers: {name: class, ...}
 LogHandlers = {}
 
-# Extract requested position, velocity, and accel from a trapq log
+# Extract status fields from log
 class HandleStatusField:
     SubscriptionIdParts = 0
     ParametersMin = ParametersMax = 1
@@ -217,6 +217,8 @@ class HandleStepQ:
             inv_freq = tdiff / cdiff
         step_dist = jmsg['step_distance']
         step_pos = jmsg['start_position']
+        if not step_data[0][0]:
+            step_data[0] = (0., step_pos, step_pos)
         for interval, raw_count, add in jmsg['data']:
             qs_dist = step_dist
             count = raw_count
@@ -316,6 +318,8 @@ class HandleStepPhase:
         if cdiff:
             inv_freq = tdiff / cdiff
         step_pos = jmsg['start_mcu_position']
+        if not step_data[0][0]:
+            step_data[0] = (0., step_pos)
         for interval, raw_count, add in jmsg['data']:
             qs_dist = 1
             count = raw_count
@@ -373,6 +377,132 @@ class HandleADXL345:
             self.next_accel = (x, y, z)
             self.data_pos += 1
 LogHandlers["adxl345"] = HandleADXL345
+
+# Extract positions from magnetic angle sensor
+class HandleAngle:
+    SubscriptionIdParts = 2
+    ParametersMin = ParametersMax = 1
+    DataSets = [
+        ('angle(<name>)', 'Angle sensor position'),
+    ]
+    def __init__(self, lmanager, name, name_parts):
+        self.name = name
+        self.angle_name = name_parts[1]
+        self.jdispatch = lmanager.get_jdispatch()
+        self.next_angle_time = self.last_angle_time = 0.
+        self.next_angle = self.last_angle = 0.
+        self.cur_data = []
+        self.data_pos = 0
+        self.position_offset = 0.
+        self.angle_dist = 1.
+        # Determine angle distance from associated stepper's rotation_distance
+        config = lmanager.get_initial_status()['configfile']['settings']
+        aname = 'angle %s' % (self.angle_name,)
+        stepper_name = config.get(aname, {}).get('stepper')
+        if stepper_name is not None:
+            sconfig = config.get(stepper_name, {})
+            rotation_distance = sconfig.get('rotation_distance', 1.)
+            gear_ratio = sconfig.get('gear_ratio', ())
+            if type(gear_ratio) == str: # XXX
+                gear_ratio = [[float(v.strip()) for v in gr.split(':')]
+                              for gr in gear_ratio.split(',')]
+            for n, d in gear_ratio:
+                rotation_distance *= d / n
+            self.angle_dist = rotation_distance / 65536.
+    def get_label(self):
+        label = '%s position' % (self.angle_name,)
+        return {'label': label, 'units': 'Position\n(mm)'}
+    def pull_data(self, req_time):
+        while 1:
+            if req_time <= self.next_angle_time:
+                pdiff = self.next_angle - self.last_angle
+                tdiff = self.next_angle_time - self.last_angle_time
+                rtdiff = req_time - self.last_angle_time
+                po = rtdiff * pdiff / tdiff
+                return ((self.last_angle + po) * self.angle_dist
+                        + self.position_offset)
+            if self.data_pos >= len(self.cur_data):
+                # Read next data block
+                jmsg = self.jdispatch.pull_msg(req_time, self.name)
+                if jmsg is None:
+                    return (self.next_angle * self.angle_dist
+                            + self.position_offset)
+                self.cur_data = jmsg['data']
+                position_offset = jmsg.get('position_offset')
+                if position_offset is not None:
+                    self.position_offset = position_offset
+                self.data_pos = 0
+                continue
+            self.last_angle = self.next_angle
+            self.last_angle_time = self.next_angle_time
+            self.next_angle_time, self.next_angle = self.cur_data[self.data_pos]
+            self.data_pos += 1
+LogHandlers["angle"] = HandleAngle
+
+def interpolate(next_val, prev_val, next_time, prev_time, req_time):
+    vdiff = next_val - prev_val
+    tdiff = next_time - prev_time
+    rtdiff = req_time - prev_time
+    return prev_val + rtdiff * vdiff / tdiff
+
+# Extract eddy current data
+class HandleEddyCurrent:
+    SubscriptionIdParts = 2
+    ParametersMin = 1
+    ParametersMax = 2
+    DataSets = [
+        ('ldc1612(<name>)', 'Coil resonant frequency'),
+        ('ldc1612(<name>,period)', 'Coil resonant period'),
+        ('ldc1612(<name>,z)', 'Estimated Z height'),
+    ]
+    def __init__(self, lmanager, name, name_parts):
+        self.name = name
+        self.sensor_name = name_parts[1]
+        if len(name_parts) == 3 and name_parts[2] not in ("period", "z"):
+            raise error("Unknown ldc1612 selection '%s'" % (name_parts[2],))
+        self.report_frequency = len(name_parts) == 2
+        self.report_z = len(name_parts) == 3 and name_parts[2] == "z"
+        self.jdispatch = lmanager.get_jdispatch()
+        self.next_samp = self.prev_samp = [0., 0., 0.]
+        self.cur_data = []
+        self.data_pos = 0
+    def get_label(self):
+        if self.report_frequency:
+            label = '%s frequency' % (self.sensor_name,)
+            return {'label': label, 'units': 'Frequency\n(Hz)'}
+        if self.report_z:
+            label = '%s height' % (self.sensor_name,)
+            return {'label': label, 'units': 'Position\n(mm)'}
+        label = '%s period' % (self.sensor_name,)
+        return {'label': label, 'units': 'Period\n(s)'}
+    def pull_data(self, req_time):
+        while 1:
+            next_time, next_freq, next_z = self.next_samp
+            if req_time <= next_time:
+                prev_time, prev_freq, prev_z = self.prev_samp
+                if self.report_frequency:
+                    next_val = next_freq
+                    prev_val = prev_freq
+                elif self.report_z:
+                    next_val = next_z
+                    prev_val = prev_z
+                else:
+                    next_val = 1. / next_freq
+                    prev_val = 1. / prev_freq
+                return interpolate(next_val, prev_val, next_time, prev_time,
+                                   req_time)
+            if self.data_pos >= len(self.cur_data):
+                # Read next data block
+                jmsg = self.jdispatch.pull_msg(req_time, self.name)
+                if jmsg is None:
+                    return 0.
+                self.cur_data = jmsg['data']
+                self.data_pos = 0
+                continue
+            self.prev_samp = self.next_samp
+            self.next_samp = self.cur_data[self.data_pos]
+            self.data_pos += 1
+LogHandlers["ldc1612"] = HandleEddyCurrent
 
 
 ######################################################################
